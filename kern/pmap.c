@@ -405,7 +405,7 @@ static void
 boot_map_region(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm)
 {
 	// Fill this function in
-	uint32_t last_page_addr = 4294963200LL;
+	uint32_t last_page_addr = 0xFFFFF000;
 	while(size > 0){
 		pte_t* pte = pgdir_walk(pgdir,(const void*)va,true);
 		*pte = pa | perm | PTE_P;

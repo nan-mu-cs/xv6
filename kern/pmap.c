@@ -410,6 +410,7 @@ boot_map_region(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm
 		pgdir[PDX(va)] |= perm | PTE_P;
 		va += PGSIZE;
 		pa += PGSIZE;
+		size -= PGSIZE;
 	}
 }
 

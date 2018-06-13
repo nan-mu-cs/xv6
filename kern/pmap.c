@@ -373,6 +373,19 @@ pte_t *
 pgdir_walk(pde_t *pgdir, const void *va, int create)
 {
 	// Fill this function in
+	pde_t *pde = &pgdir[PDX(va)];
+	if(*pde & PTE_P){
+		return &(((pte_t *)KADDR(PTE_ADDR(*pde)))[PTX(va)]);
+	}
+	if(create)
+	{
+		struct PageInfo * page = page_alloc(1);
+		if(page){
+			page->pp_ref += 1;
+			*pde = page2pa(page) | PTE_P;
+			return &(((pte_t *)KADDR(PTE_ADDR(*pde)))[PTX(va)]);
+		}
+	}
 	return NULL;
 }
 
@@ -391,6 +404,13 @@ static void
 boot_map_region(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm)
 {
 	// Fill this function in
+	while(size > 0){
+		pte_t* pte = pgdir_walk(pgdir,(const void*)va,true);
+		*pte = pa | perm | PTE_P;
+		pgdir[PDX(va)] |= perm | PTE_P;
+		va += PGSIZE;
+		pa += PGSIZE;
+	}
 }
 
 //
@@ -422,6 +442,14 @@ int
 page_insert(pde_t *pgdir, struct PageInfo *pp, void *va, int perm)
 {
 	// Fill this function in
+	pte_t *pte = pgdir_walk(pgdir,va, true);
+	if (pte == NULL)
+		return -E_NO_MEM; // couldn't allocate page table
+	pp->pp_ref += 1;
+	if(*pte & PTE_P)
+		page_remove(pgdir,va);
+	*pte = page2pa(pp) | perm | PTE_P;
+	pgdir[PDX(va)] |= perm;
 	return 0;
 }
 
@@ -439,7 +467,13 @@ page_insert(pde_t *pgdir, struct PageInfo *pp, void *va, int perm)
 struct PageInfo *
 page_lookup(pde_t *pgdir, void *va, pte_t **pte_store)
 {
-	// Fill this function in
+	pte_t *pte = pgdir_walk(pgdir,va,false);
+	if(pte && (*pte & PTE_P)){
+		if(pte_store){
+			*pte_store = pte;
+		}
+		return pa2page(PTE_ADDR(*pte));
+	}
 	return NULL;
 }
 
@@ -462,6 +496,13 @@ void
 page_remove(pde_t *pgdir, void *va)
 {
 	// Fill this function in
+	pte_t *pte;
+	struct PageInfo * page = page_lookup(pgdir,va,&pte);
+	if(!page)
+		return ;
+	page_decref(page);
+	tlb_invalidate(pgdir,va);
+	*pte = (*pte & 0);
 }
 
 //
@@ -701,7 +742,7 @@ check_page(void)
 	void *va;
 	int i;
 	extern pde_t entry_pgdir[];
-
+//	cprintf("start check page!!!\n");
 	// should be able to allocate three pages
 	pp0 = pp1 = pp2 = 0;
 	assert((pp0 = page_alloc(0)));
@@ -711,7 +752,7 @@ check_page(void)
 	assert(pp0);
 	assert(pp1 && pp1 != pp0);
 	assert(pp2 && pp2 != pp1 && pp2 != pp0);
-
+//	cprintf("start check page!!!should be able to allocate three pages\n");
 	// temporarily steal the rest of the free pages
 	fl = page_free_list;
 	page_free_list = 0;
@@ -732,7 +773,7 @@ check_page(void)
 	assert(check_va2pa(kern_pgdir, 0x0) == page2pa(pp1));
 	assert(pp1->pp_ref == 1);
 	assert(pp0->pp_ref == 1);
-
+//	cprintf("start check page!!!free pp0 and try again: pp0 should be used for page table\n");
 	// should be able to map pp2 at PGSIZE because pp0 is already allocated for page table
 	assert(page_insert(kern_pgdir, pp2, (void*) PGSIZE, PTE_W) == 0);
 	assert(check_va2pa(kern_pgdir, PGSIZE) == page2pa(pp2));
@@ -745,22 +786,22 @@ check_page(void)
 	assert(page_insert(kern_pgdir, pp2, (void*) PGSIZE, PTE_W) == 0);
 	assert(check_va2pa(kern_pgdir, PGSIZE) == page2pa(pp2));
 	assert(pp2->pp_ref == 1);
-
+//	cprintf("start check page!!!\n");
 	// pp2 should NOT be on the free list
 	// could happen in ref counts are handled sloppily in page_insert
 	assert(!page_alloc(0));
-
+	cprintf("start check page!!!\n");
 	// check that pgdir_walk returns a pointer to the pte
 	ptep = (pte_t *) KADDR(PTE_ADDR(kern_pgdir[PDX(PGSIZE)]));
 	assert(pgdir_walk(kern_pgdir, (void*)PGSIZE, 0) == ptep+PTX(PGSIZE));
-
+//	cprintf("start check page!!!");
 	// should be able to change permissions too.
 	assert(page_insert(kern_pgdir, pp2, (void*) PGSIZE, PTE_W|PTE_U) == 0);
 	assert(check_va2pa(kern_pgdir, PGSIZE) == page2pa(pp2));
 	assert(pp2->pp_ref == 1);
 	assert(*pgdir_walk(kern_pgdir, (void*) PGSIZE, 0) & PTE_U);
 	assert(kern_pgdir[0] & PTE_U);
-
+//	cprintf("start check page!!!");
 	// should be able to remap with fewer permissions
 	assert(page_insert(kern_pgdir, pp2, (void*) PGSIZE, PTE_W) == 0);
 	assert(*pgdir_walk(kern_pgdir, (void*) PGSIZE, 0) & PTE_W);
@@ -782,7 +823,7 @@ check_page(void)
 
 	// pp2 should be returned by page_alloc
 	assert((pp = page_alloc(0)) && pp == pp2);
-
+//	cprintf("start check page!!!");
 	// unmapping pp1 at 0 should keep pp1 at PGSIZE
 	page_remove(kern_pgdir, 0x0);
 	assert(check_va2pa(kern_pgdir, 0x0) == ~0);
